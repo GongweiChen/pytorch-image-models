@@ -545,19 +545,19 @@ class HighResolutionNet(nn.Module):
         block = blocks_dict[self.stage4_cfg['BLOCK']]
         num_channels = [num_channels[i] * block.expansion for i in range(len(num_channels))]
         self.transition3 = self._make_transition_layer(pre_stage_channels, num_channels)
-        self.stage4, pre_stage_channels = self._make_stage(self.stage4_cfg, num_channels, multi_scale_output=True)
+        self.stage4, self.pre_stage_channels = self._make_stage(self.stage4_cfg, num_channels, multi_scale_output=True)
 
         self.head = head
         self.head_channels = None  # set if _make_head called
         if head == 'classification':
             # Classification Head
             self.num_features = 2048
-            self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(pre_stage_channels)
+            self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(self.pre_stage_channels)
             self.global_pool, self.classifier = create_classifier(
                 self.num_features, self.num_classes, pool_type=global_pool)
         elif head == 'incre':
             self.num_features = 2048
-            self.incre_modules, _, _ = self._make_head(pre_stage_channels, True)
+            self.incre_modules, _, _ = self._make_head(self.pre_stage_channels, True)
         else:
             self.incre_modules = None
             self.num_features = 256
