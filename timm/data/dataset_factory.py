@@ -6,7 +6,10 @@ import os
 
 from torchvision.datasets import CIFAR100, CIFAR10, MNIST, QMNIST, KMNIST, FashionMNIST, ImageNet, ImageFolder
 try:
-    from torchvision.datasets import Places365
+    # from torchvision.datasets import Places365
+    import sys
+    sys.path.append('/home/gwc/Projects_py3/my_pytorch')
+    from places365 import Places365  # my own Places365 for including Places365-1000 training set.
     has_places365 = True
 except ImportError:
     has_places365 = False

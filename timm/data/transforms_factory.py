@@ -40,6 +40,109 @@ def transforms_noaug_train(
         ]
     return transforms.Compose(tfl)
 
+def transforms_places_train(
+        img_size=224,
+        scale=None,
+        ratio=None,
+        hflip=0.5,
+        vflip=0.,
+        color_jitter=None,
+        auto_augment=None,
+        interpolation='random',
+        use_prefetcher=False,
+        mean=IMAGENET_DEFAULT_MEAN,
+        std=IMAGENET_DEFAULT_STD,
+        re_prob=0.,
+        re_mode='const',
+        re_count=1,
+        re_num_splits=0,
+        separate=False,
+):
+    """
+    If separate==True, the transforms are returned as a tuple of 3 separate transforms
+    for use in a mixing dataset that passes
+     * all data through the first (primary) transform, called the 'clean' data
+     * a portion of the data through the secondary transform
+     * normalizes and converts the branches above with the third, final transform
+    """
+    # scale = tuple(scale or (0.08, 1.0))  # default imagenet scale range
+    # ratio = tuple(ratio or (3./4., 4./3.))  # default imagenet ratio range
+    # primary_tfl = [
+        # RandomResizedCropAndInterpolation(img_size, scale=scale, ratio=ratio, interpolation=interpolation)]
+    crop_pct = 7.0 / 8.0
+    if isinstance(img_size, (tuple, list)):
+        assert len(img_size) == 2
+        if img_size[-1] == img_size[-2]:
+            # fall-back to older behaviour so Resize scales to shortest edge if target is square
+            scale_size = int(math.floor(img_size[0] / crop_pct))
+        else:
+            scale_size = tuple([int(x / crop_pct) for x in img_size])
+    else:
+        scale_size = int(math.floor(img_size / crop_pct))
+    if interpolation == 'random':
+        # random interpolation not supported with str_to_interp_mode()
+        interpolation = 'bilinear'
+    primary_tfl = [
+        transforms.Resize(scale_size, interpolation=str_to_interp_mode(interpolation)),
+        # transforms.Resize(img_size, interpolation=str_to_interp_mode(interpolation)),
+        transforms.RandomCrop(img_size)
+    ]
+    if hflip > 0.:
+        primary_tfl += [transforms.RandomHorizontalFlip(p=hflip)]
+    if vflip > 0.:
+        primary_tfl += [transforms.RandomVerticalFlip(p=vflip)]
+
+    secondary_tfl = []
+    if auto_augment:
+        assert isinstance(auto_augment, str)
+        if isinstance(img_size, (tuple, list)):
+            img_size_min = min(img_size)
+        else:
+            img_size_min = img_size
+        aa_params = dict(
+            translate_const=int(img_size_min * 0.45),
+            img_mean=tuple([min(255, round(255 * x)) for x in mean]),
+        )
+        if interpolation and interpolation != 'random':
+            aa_params['interpolation'] = str_to_pil_interp(interpolation)
+        if auto_augment.startswith('rand'):
+            secondary_tfl += [rand_augment_transform(auto_augment, aa_params)]
+        elif auto_augment.startswith('augmix'):
+            aa_params['translate_pct'] = 0.3
+            secondary_tfl += [augment_and_mix_transform(auto_augment, aa_params)]
+        else:
+            secondary_tfl += [auto_augment_transform(auto_augment, aa_params)]
+    elif color_jitter is not None:
+        # color jitter is enabled when not using AA
+        if isinstance(color_jitter, (list, tuple)):
+            # color jitter should be a 3-tuple/list if spec brightness/contrast/saturation
+            # or 4 if also augmenting hue
+            assert len(color_jitter) in (3, 4)
+        else:
+            # if it's a scalar, duplicate for brightness, contrast, and saturation, no hue
+            color_jitter = (float(color_jitter),) * 3
+        secondary_tfl += [transforms.ColorJitter(*color_jitter)]
+
+    final_tfl = []
+    if use_prefetcher:
+        # prefetcher and collate will handle tensor conversion and norm
+        final_tfl += [ToNumpy()]
+    else:
+        final_tfl += [
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=torch.tensor(mean),
+                std=torch.tensor(std))
+        ]
+        if re_prob > 0.:
+            final_tfl.append(
+                RandomErasing(re_prob, mode=re_mode, max_count=re_count, num_splits=re_num_splits, device='cpu'))
+
+    if separate:
+        return transforms.Compose(primary_tfl), transforms.Compose(secondary_tfl), transforms.Compose(final_tfl)
+    else:
+        return transforms.Compose(primary_tfl + secondary_tfl + final_tfl)
+
 
 def transforms_imagenet_train(
         img_size=224,
@@ -168,7 +271,7 @@ def create_transform(
         input_size,
         is_training=False,
         use_prefetcher=False,
-        no_aug=False,
+        aug_style='imagenet',
         scale=None,
         ratio=None,
         hflip=0.5,
@@ -197,7 +300,8 @@ def create_transform(
         transform = TfPreprocessTransform(
             is_training=is_training, size=img_size, interpolation=interpolation)
     else:
-        if is_training and no_aug:
+        assert aug_style in ['no', 'imagenet', 'places'], "TrainAug only support ['no', 'imagenet', 'places']"
+        if is_training and aug_style == 'no':
             assert not separate, "Cannot perform split augmentation with no_aug"
             transform = transforms_noaug_train(
                 img_size,
@@ -205,7 +309,25 @@ def create_transform(
                 use_prefetcher=use_prefetcher,
                 mean=mean,
                 std=std)
-        elif is_training:
+        elif is_training and aug_style == 'places':
+            transform = transforms_places_train(
+                img_size,
+                scale=scale,
+                ratio=ratio,
+                hflip=hflip,
+                vflip=vflip,
+                color_jitter=color_jitter,
+                auto_augment=auto_augment,
+                interpolation=interpolation,
+                use_prefetcher=use_prefetcher,
+                mean=mean,
+                std=std,
+                re_prob=re_prob,
+                re_mode=re_mode,
+                re_count=re_count,
+                re_num_splits=re_num_splits,
+                separate=separate)
+        elif is_training and aug_style == 'imagenet':
             transform = transforms_imagenet_train(
                 img_size,
                 scale=scale,

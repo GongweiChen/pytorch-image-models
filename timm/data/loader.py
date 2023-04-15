@@ -192,7 +192,7 @@ def create_loader(
         batch_size,
         is_training=False,
         use_prefetcher=True,
-        no_aug=False,
+        aug_style='imagenet',
         re_prob=0.,
         re_mode='const',
         re_count=1,
@@ -229,7 +229,7 @@ def create_loader(
         input_size,
         is_training=is_training,
         use_prefetcher=use_prefetcher,
-        no_aug=no_aug,
+        aug_style=aug_style,
         scale=scale,
         ratio=ratio,
         hflip=hflip,
@@ -291,7 +291,7 @@ def create_loader(
         loader_args.pop('persistent_workers')  # only in Pytorch 1.7+
         loader = loader_class(dataset, **loader_args)
     if use_prefetcher:
-        prefetch_re_prob = re_prob if is_training and not no_aug else 0.
+        prefetch_re_prob = re_prob if is_training and aug_style != 'no' else 0.
         loader = PrefetchLoader(
             loader,
             mean=mean,
